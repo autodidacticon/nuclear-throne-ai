@@ -1,0 +1,105 @@
+{
+  "name": "Nuclear Throne RL Agent",
+  "image": "nuclear-throne-ai-dev:latest",
+
+  "runArgs": [
+    "--privileged"
+  ],
+
+  "workspaceFolder": "/Users/richard/git/nuclear-throne-ai",
+
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        // Python
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.debugpy",
+        // Docker — for managing game simulation containers
+        "ms-azuretools.vscode-docker",
+        // General utilities
+        "eamodio.gitlens",
+        "github.vscode-pull-request-github",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "streetsidesoftware.code-spell-checker"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "zsh": { "path": "zsh" },
+          "bash": { "path": "bash", "icon": "terminal-bash" }
+        },
+        // Python
+        "python.defaultInterpreterPath": "/usr/local/bin/python3",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+
+  // mcr.microsoft.com/devcontainers/python uses "vscode", not "node"
+  "remoteUser": "vscode",
+
+  "mounts": [
+    // Shell history persistence
+    "source=nt-rl-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    // Claude Code config — bind-mount the host ~/.claude directory
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    // Game assets — populated on the host by `npm run regen` (Human Intervention 2).
+    // Mount the asset-populated repo directory so the devcontainer can access it
+    // without copying several GB of assets into the image.
+    // Adjust the host path to match your local checkout:
+    "source=${localWorkspaceFolder},target=/Users/richard/git/nuclear-throne-ai,type=bind,consistency=cached"
+  ],
+
+  "containerEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+
+    // Weights & Biases — set WANDB_API_KEY in your host shell before opening
+    // the devcontainer (e.g. export WANDB_API_KEY=... in ~/.zshrc)
+    "WANDB_API_KEY": "${localEnv:WANDB_API_KEY}",
+
+    // GameMaker license — path to the license file on the host.
+    // Used by Agent 03's Docker build as a build secret.
+    "GAMEMAKER_LICENSE_PATH": "${localEnv:GAMEMAKER_LICENSE_PATH}",
+
+    // PyTorch device hint — training should be run natively on the host
+    // for MPS acceleration. Inside this container, torch uses CPU.
+    // See Setup Notes below.
+    "PYTORCH_DEVICE": "cpu"
+  },
+
+  // Game socket bridge ports for parallel simulation containers.
+  // Extend this list if running more than 8 parallel envs.
+  "forwardPorts": [
+    7777,  // nt-agent-1
+    7778,  // nt-agent-2
+    7779,  // nt-agent-3
+    7780,  // nt-agent-4
+    7781,  // nt-agent-5
+    7782,  // nt-agent-6
+    7783,  // nt-agent-7
+    7784   // nt-agent-8
+  ],
+
+  "portsAttributes": {
+    "7777": { "label": "NT Agent 1 Socket", "onAutoForward": "silent" },
+    "7778": { "label": "NT Agent 2 Socket", "onAutoForward": "silent" },
+    "7779": { "label": "NT Agent 3 Socket", "onAutoForward": "silent" },
+    "7780": { "label": "NT Agent 4 Socket", "onAutoForward": "silent" },
+    "7781": { "label": "NT Agent 5 Socket", "onAutoForward": "silent" },
+    "7782": { "label": "NT Agent 6 Socket", "onAutoForward": "silent" },
+    "7783": { "label": "NT Agent 7 Socket", "onAutoForward": "silent" },
+    "7784": { "label": "NT Agent 8 Socket", "onAutoForward": "silent" }
+  }
+}

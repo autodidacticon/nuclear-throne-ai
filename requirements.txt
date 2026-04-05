@@ -1,0 +1,7 @@
+gymnasium>=0.29.0
+stable-baselines3>=2.3.0
+numpy>=1.26.0
+torch>=2.2.0
+imitation>=1.0.0
+wandb>=0.16.0
+pytest>=8.0.0
