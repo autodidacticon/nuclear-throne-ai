@@ -9,9 +9,10 @@ global.rec_session_id = string(current_time) + "_" + string(irandom(9999));  // 
 global.rec_episode    = 0;
 global.rec_frame      = 0;
 global.rec_buffer     = "";       // accumulated JSONL lines
-global.rec_filename   = "";       // current episode file path
+global.rec_filename   = "";       // base episode filename (no extension)
 global.rec_active     = false;    // true while recording an episode
-global.rec_flush_interval = 300;  // flush to disk every N frames
+global.rec_part_num   = 0;        // chunk file index for current episode
+global.rec_flush_interval = 60;   // flush to disk every N frames
 global.rec_frames_since_flush = 0;
 global.rec_max_enemies = 20;
 
@@ -85,7 +86,7 @@ if (global.rec_active) {
 }
 
 #define cleanup
-// Flush any remaining data
+// Flush any remaining data as a final chunk
 if (global.rec_active && global.rec_buffer != "") {
     rec_flush_partial();
 }
@@ -105,10 +106,14 @@ global.rec_episode += 1;
 global.rec_frame = 0;
 global.rec_buffer = "";
 global.rec_frames_since_flush = 0;
+global.rec_part_num = 0;
 global.rec_active = true;
 
-// Generate filename with session ID + episode number (unique across sessions)
-global.rec_filename = "ntt_demo_" + global.rec_session_id + "_" + string_zeros(global.rec_episode, 4) + ".jsonl";
+// Base filename (without extension) for chunk files.
+// NTT's file I/O is limited to string_save/string_load, so we cannot append
+// to a single growing file without incurring O(n^2) cost. Instead we write
+// each flush to a separate chunk file; the Python converter concatenates them.
+global.rec_filename = "ntt_demo_" + global.rec_session_id + "_" + string_zeros(global.rec_episode, 4);
 
 // Initialize prev-frame trackers from current game state
 if (instance_exists(GameCont)) {
@@ -478,35 +483,25 @@ global.rec_prev_level   = _level;
 global.rec_frame += 1;
 
 #define rec_flush_episode
-// Flush all buffered data as end-of-episode.
-// Uses file_text_open_append to avoid the O(n) read-modify-write pattern that
-// caused quadratic slowdown as session length grew.
+// End-of-episode flush: write the final chunk file.
+// Each flush writes to a new chunk (no reads, no growing files) so total
+// I/O cost is linear in session length, not quadratic.
 if (global.rec_buffer != "" && global.rec_filename != "") {
-    var _f;
-    if (file_exists(global.rec_filename)) {
-        _f = file_text_open_append(global.rec_filename);
-    } else {
-        _f = file_text_open_write(global.rec_filename);
-    }
-    file_text_write_string(_f, global.rec_buffer);
-    file_text_close(_f);
-    trace("nt_recorder — episode " + string(global.rec_episode) + " saved (" + string(global.rec_frame) + " frames) -> " + global.rec_filename);
+    var _chunk_file = global.rec_filename + "_part" + string_zeros(global.rec_part_num, 4) + ".jsonl";
+    string_save(global.rec_buffer, _chunk_file);
+    global.rec_part_num += 1;
+    trace("nt_recorder — episode " + string(global.rec_episode) + " saved (" + string(global.rec_frame) + " frames, " + string(global.rec_part_num) + " chunks) -> " + global.rec_filename);
 }
 global.rec_buffer = "";
 global.rec_frames_since_flush = 0;
 
 #define rec_flush_partial
-// Safety flush — append accumulated frames to disk without ending episode.
-// O(buffer_size) per flush instead of O(file_size) — no session-length scaling.
+// Mid-episode flush: write buffered lines to a new chunk file.
+// O(buffer_size) per flush, never reads existing data — no quadratic growth.
 if (global.rec_buffer != "" && global.rec_filename != "") {
-    var _f;
-    if (file_exists(global.rec_filename)) {
-        _f = file_text_open_append(global.rec_filename);
-    } else {
-        _f = file_text_open_write(global.rec_filename);
-    }
-    file_text_write_string(_f, global.rec_buffer);
-    file_text_close(_f);
+    var _chunk_file = global.rec_filename + "_part" + string_zeros(global.rec_part_num, 4) + ".jsonl";
+    string_save(global.rec_buffer, _chunk_file);
+    global.rec_part_num += 1;
 }
 global.rec_buffer = "";
 global.rec_frames_since_flush = 0;

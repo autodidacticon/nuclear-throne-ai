@@ -19,7 +19,35 @@ Game (500 FPS)              UDP (port 7777+)              Python RL
 
 - Python 3.12+ with dependencies: `pip install -r requirements.txt` (or `uv pip install -r requirements.txt`)
 - GameMaker Studio 2 (for building the rebuild)
-- Nuclear Throne on Steam (for recording demonstrations via NTT)
+- Node.js 20+ and npm (for the asset extraction scripts)
+- **A legitimate copy of Nuclear Throne** (Update 100+) installed via Steam — required for both recording demonstrations and building the rebuild.
+
+### 0. Extract Game Assets (one-time setup)
+
+The `nt-recreated-public/` rebuild ships **without any game assets** for copyright reasons. You must extract sprites, sounds, rooms, and other resources from your own copy of Nuclear Throne before the rebuild can be built.
+
+**Default Steam install paths:**
+- **macOS**: `~/Library/Application Support/Steam/steamapps/common/Nuclear Throne/nuclearthrone.app/Contents/Resources`
+- **Windows**: `C:\Program Files (x86)\Steam\steamapps\common\Nuclear Throne\`
+- **Linux**: `~/.local/share/Steam/steamapps/common/Nuclear Throne/`
+
+**Run the extraction scripts:**
+
+```bash
+cd "nt-recreated-public/~ Build-Scripts ~"
+npm ci          # install NodeJS dependencies (first run only)
+npm run regen   # extract assets from your Steam install
+```
+
+The script auto-detects your Steam library. If Nuclear Throne is installed in a non-standard location, pass the path explicitly:
+
+```bash
+npm run regen --game-path="/path/to/Nuclear Throne/"
+```
+
+After extraction completes, the GameMaker project in `nt-recreated-public/` becomes buildable. Assets are gitignored and stay out of commits.
+
+> **Note:** If a future Nuclear Throne update adds new assets (e.g., new weapons), run `npm run regen-ignores` to refresh the `.gitignore` list.
 
 ### 1. Record Human Demonstrations (NTT)
 

@@ -240,6 +240,10 @@ class NTTLogConverter:
     def convert_directory(self, input_dir: str, output_dir: str = "demonstrations") -> int:
         """Convert all .jsonl files in a directory.
 
+        Handles both single-file episodes (legacy format) and chunked episodes
+        (new format: `<base>_partNNNN.jsonl`). Chunks are grouped by base name
+        and concatenated in order before conversion.
+
         Returns total number of episodes converted.
         """
         input_path = Path(input_dir)
@@ -249,13 +253,84 @@ class NTTLogConverter:
             logger.warning("No .jsonl files found in %s", input_dir)
             return 0
 
+        # Group files by episode. Files named `<base>_partNNNN.jsonl` belong
+        # to episode `<base>`. Files without `_part` are standalone episodes.
+        import re
+        chunk_re = re.compile(r"^(.+)_part(\d{4})$")
+        episodes: dict[str, list[Path]] = {}
+
+        for f in jsonl_files:
+            stem = f.stem  # filename without .jsonl
+            m = chunk_re.match(stem)
+            if m:
+                base = m.group(1)
+                episodes.setdefault(base, []).append(f)
+            else:
+                episodes.setdefault(stem, []).append(f)
+
         total_episodes = 0
-        for jsonl_file in jsonl_files:
-            logger.info("Converting %s ...", jsonl_file.name)
-            created = self.convert_file(str(jsonl_file), output_dir)
+        for base, chunks in sorted(episodes.items()):
+            # Sort chunks by their part number (or filename for legacy)
+            chunks = sorted(chunks, key=lambda p: p.name)
+            if len(chunks) > 1:
+                logger.info("Converting %s (%d chunks) ...", base, len(chunks))
+            else:
+                logger.info("Converting %s ...", chunks[0].name)
+            created = self._convert_chunks(base, chunks, output_dir)
             total_episodes += len(created)
 
         return total_episodes
+
+    def _convert_chunks(
+        self, base_name: str, chunk_paths: list[Path], output_dir: str
+    ) -> list[str]:
+        """Convert a list of chunk files as a single episode sequence.
+
+        Chunks are parsed in order and all frames are concatenated before
+        episode boundary detection runs.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        all_frames: list[dict] = []
+        for chunk in chunk_paths:
+            frames = self._parse_jsonl(str(chunk))
+            all_frames.extend(frames)
+
+        if not all_frames:
+            logger.warning("No valid frames across %d chunk(s) for %s — skipping",
+                           len(chunk_paths), base_name)
+            return []
+
+        episodes = _detect_episode_boundaries(all_frames)
+        logger.info("  Found %d episode(s) across %d chunk(s)",
+                    len(episodes), len(chunk_paths))
+
+        created_files = []
+        timestamp = int(time.time())
+
+        for ep_idx, episode_frames in enumerate(episodes):
+            result = self._convert_episode(episode_frames)
+            if result is None:
+                logger.warning("  Episode %d in %s produced no valid data — skipping",
+                               ep_idx, base_name)
+                continue
+
+            obs, actions, rewards, dones = result
+            filename = f"{base_name}_ep{ep_idx:04d}_{timestamp}.npz"
+            filepath = os.path.join(output_dir, filename)
+
+            np.savez_compressed(
+                filepath,
+                obs=obs,
+                actions=actions,
+                rewards=rewards,
+                dones=dones,
+            )
+            created_files.append(filepath)
+            logger.info("  Episode %d: %d frames, reward=%.1f -> %s",
+                        ep_idx, len(obs), rewards.sum(), filename)
+
+        return created_files
 
     def _parse_jsonl(self, jsonl_path: str) -> list[dict]:
         """Parse a .jsonl file, skipping malformed lines.
