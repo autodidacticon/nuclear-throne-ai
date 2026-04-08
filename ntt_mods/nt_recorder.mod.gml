@@ -478,27 +478,35 @@ global.rec_prev_level   = _level;
 global.rec_frame += 1;
 
 #define rec_flush_episode
-// Flush all buffered data as end-of-episode
+// Flush all buffered data as end-of-episode.
+// Uses file_text_open_append to avoid the O(n) read-modify-write pattern that
+// caused quadratic slowdown as session length grew.
 if (global.rec_buffer != "" && global.rec_filename != "") {
-    // Append to existing file content (in case of periodic flushes)
-    var _existing = "";
+    var _f;
     if (file_exists(global.rec_filename)) {
-        _existing = string_load(global.rec_filename);
+        _f = file_text_open_append(global.rec_filename);
+    } else {
+        _f = file_text_open_write(global.rec_filename);
     }
-    string_save(_existing + global.rec_buffer, global.rec_filename);
+    file_text_write_string(_f, global.rec_buffer);
+    file_text_close(_f);
     trace("nt_recorder — episode " + string(global.rec_episode) + " saved (" + string(global.rec_frame) + " frames) -> " + global.rec_filename);
 }
 global.rec_buffer = "";
 global.rec_frames_since_flush = 0;
 
 #define rec_flush_partial
-// Safety flush — write accumulated frames to disk without ending episode
+// Safety flush — append accumulated frames to disk without ending episode.
+// O(buffer_size) per flush instead of O(file_size) — no session-length scaling.
 if (global.rec_buffer != "" && global.rec_filename != "") {
-    var _existing = "";
+    var _f;
     if (file_exists(global.rec_filename)) {
-        _existing = string_load(global.rec_filename);
+        _f = file_text_open_append(global.rec_filename);
+    } else {
+        _f = file_text_open_write(global.rec_filename);
     }
-    string_save(_existing + global.rec_buffer, global.rec_filename);
+    file_text_write_string(_f, global.rec_buffer);
+    file_text_close(_f);
 }
 global.rec_buffer = "";
 global.rec_frames_since_flush = 0;
