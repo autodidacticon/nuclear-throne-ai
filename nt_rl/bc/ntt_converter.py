@@ -13,7 +13,9 @@ Usage:
 import argparse
 import json
 import logging
+import math
 import os
+import re
 import time
 from pathlib import Path
 
@@ -24,6 +26,63 @@ from nt_rl.obs_utils import encode_observation
 from nt_rl.bc.recorder import discretize_action
 
 logger = logging.getLogger(__name__)
+
+# Regex to quote unquoted string values in NTT's non-standard JSON.
+# Matches :value where value is a bare word (possibly with spaces like "ref object 14")
+# followed by , or } — but NOT true/false/null or numbers.
+_UNQUOTED_VALUE_RE = re.compile(
+    r':(?P<val>[a-zA-Z][a-zA-Z0-9 ]*?)(?P<end>[,}])'
+)
+
+
+def _sanitize_ntt_json(line: str) -> str:
+    """Quote unquoted string values in NTT's non-standard JSON output.
+
+    The NTT mod outputs bare identifiers like  race:crystal  and
+    type_id:ref object 14  instead of proper JSON strings.  This function
+    wraps those values in double-quotes so ``json.loads`` can parse them.
+    """
+    def _quote_match(m: re.Match) -> str:
+        val = m.group("val")
+        # Don't touch JSON literals
+        if val in ("true", "false", "null"):
+            return m.group(0)
+        return f':"{val}"{m.group("end")}'
+
+    return _UNQUOTED_VALUE_RE.sub(_quote_match, line)
+
+
+def _discretize_action_from_velocity(player: dict, human_action: dict,
+                                     n_aim_angles: int = 24,
+                                     speed_threshold: float = 0.5) -> np.ndarray:
+    """Derive movement direction from hspeed/vspeed instead of broken move_dir.
+
+    The NTT mod's move_dir/moving fields are unreliable (only record 0 or 180
+    degrees). We reconstruct the true movement direction from the player's
+    velocity vector, which the game state reports correctly.
+
+    Aim, shoot, and special are still taken from human_action as those are fine.
+    """
+    hs = player.get("hspeed", 0.0)
+    vs = player.get("vspeed", 0.0)
+    speed = math.sqrt(hs * hs + vs * vs)
+
+    if speed < speed_threshold:
+        move_idx = 8  # no movement
+    else:
+        # atan2(-vs, hs) because GameMaker Y-axis is inverted (down = positive)
+        angle = math.degrees(math.atan2(-vs, hs)) % 360
+        move_idx = round(angle / 45) % 8
+
+    # Aim, shoot, special — use human_action directly (these fields are correct)
+    aim_dir = human_action.get("aim_dir", 0) % 360
+    bin_size = 360.0 / n_aim_angles
+    aim_idx = round(aim_dir / bin_size) % n_aim_angles
+
+    shoot = 1 if human_action.get("fire", False) else 0
+    special = 1 if human_action.get("spec", False) else 0
+
+    return np.array([move_idx, aim_idx, shoot, special], dtype=np.int32)
 
 
 def _map_variable_names(state: dict) -> dict:
@@ -46,7 +105,15 @@ def _map_variable_names(state: dict) -> dict:
         if "maxhealth" in enemy:
             enemy["max_hp"] = enemy.pop("maxhealth")
         if "type_id" in enemy:
-            enemy["hitid"] = enemy.pop("type_id")
+            raw = enemy.pop("type_id")
+            # NTT outputs "ref object 14" strings — extract the numeric ID
+            if isinstance(raw, str):
+                parts = raw.split()
+                try:
+                    raw = int(parts[-1])
+                except (ValueError, IndexError):
+                    raw = 0
+            enemy["hitid"] = raw
 
     return state
 
@@ -191,7 +258,11 @@ class NTTLogConverter:
         return total_episodes
 
     def _parse_jsonl(self, jsonl_path: str) -> list[dict]:
-        """Parse a .jsonl file, skipping malformed lines."""
+        """Parse a .jsonl file, skipping malformed lines.
+
+        Applies ``_sanitize_ntt_json`` to handle the NTT mod's non-standard
+        JSON (unquoted string values like ``race:crystal``).
+        """
         frames = []
         with open(jsonl_path, "r") as f:
             for line_num, line in enumerate(f, 1):
@@ -199,7 +270,7 @@ class NTTLogConverter:
                 if not line:
                     continue
                 try:
-                    frame = json.loads(line)
+                    frame = json.loads(_sanitize_ntt_json(line))
                     frames.append(frame)
                 except json.JSONDecodeError as e:
                     logger.warning("Skipping malformed JSON at %s:%d: %s",
@@ -220,10 +291,15 @@ class NTTLogConverter:
         reward_list = []
 
         for i, raw_frame in enumerate(frames):
-            # Deep copy the relevant parts to avoid mutating the original
+            # Deep copy the relevant parts to avoid mutating the original.
+            # `projectiles` and player wall_dist_* fields (when present in newer
+            # NTT recordings) are passed through unchanged — encode_observation
+            # already knows how to read them, and old logs without them fall
+            # back to safe defaults (0.5 for walls, 0.0 for projectiles).
             frame = {
                 "player": dict(raw_frame.get("player", {})),
                 "enemies": [dict(e) for e in raw_frame.get("enemies", [])],
+                "projectiles": [dict(p) for p in raw_frame.get("projectiles", [])],
                 "game": dict(raw_frame.get("game", {})),
             }
 
@@ -234,9 +310,11 @@ class NTTLogConverter:
             obs = encode_observation(frame, self.config)
             obs_list.append(obs)
 
-            # Discretize action
+            # Discretize action — derive movement from velocity, not broken move_dir
             human_action = raw_frame.get("human_action", {})
-            action = discretize_action(human_action, self.config.n_aim_angles)
+            action = _discretize_action_from_velocity(
+                raw_frame.get("player", {}), human_action, self.config.n_aim_angles,
+            )
             action_list.append(action)
 
             # Compute reward

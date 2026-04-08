@@ -84,10 +84,37 @@ ls demonstrations/*.npz
 
 The converter:
 - Maps NTT variable names (`my_health` → `hp`, `maxhealth` → `max_hp`, etc.)
-- Encodes observations to the same 112-float vector the RL agent uses
+- Encodes observations to the same 239-float vector the RL agent uses
 - Discretizes continuous human input to `MultiDiscrete([9, 24, 2, 2])` actions
 - Computes rewards from raw signal deltas using `EnvConfig` weights
 - Splits multi-episode files automatically
+- Passes through new wall raycast and projectile fields when present, falling back
+  to safe defaults (wall=0.5, projectiles=0.0) for older logs that don't include them
+
+## Recorder fields captured
+
+The current `nt_recorder.mod.gml` writes one JSON object per frame containing:
+
+- `player` — position, velocity, health, weapon, ammo, gunangle, race, plus
+  `wall_dist_e/n/w/s` (4 cardinal raycasts against `Wall`, normalized to [0,1]
+  over a 300px max range)
+- `enemies` — nearest 20 instances of the `enemy` parent (x, y, my_health,
+  maxhealth, type_id), sorted by distance to player
+- `projectiles` — nearest 20 instances of `EnemyBullet1` (parent of all enemy
+  bullets in NT/NTT). Each has pre-normalized x/y, hspeed/vspeed, damage, lifetime
+- `game` — area, subarea, level, loops, kills, hard mode flag
+- `human_action` — raw button state (move_dir, aim_dir, fire, spec, swap, pick)
+- `reward_signals` — kill/damage/heal/level deltas from the previous frame
+
+The wall and projectile collection use `object_exists()` guards so the mod
+remains compatible with NTT versions where those objects might be missing —
+in that case the fields default to safe values rather than crashing.
+
+**Object name assumptions:** The recorder uses `Wall` for wall raycasts and
+`EnemyBullet1` as the enemy projectile parent. These are the official Nuclear
+Throne object names and apply to NTT (which is built on the same data.win).
+If a future NTT release renames them, update the recorder's `object_exists`
+checks accordingly.
 
 ## 7. Train
 

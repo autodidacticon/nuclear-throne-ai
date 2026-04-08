@@ -9,12 +9,14 @@ class EnvConfig:
     host: str = "localhost"
     base_port: int = 7777
     socket_timeout: float = 10.0
-    step_timeout: float = 2.0
+    step_timeout: float = 10.0
 
     # Observation space
     max_enemies: int = 20  # Matches GML global.agent_max_enemies
     enemy_features: int = 5  # x, y, hp_ratio, max_hp, hitid_norm
-    player_features: int = 12  # See obs_utils.py for layout
+    max_projectiles: int = 20  # Matches GML global.agent_max_projectiles
+    projectile_features: int = 6  # x, y, hspeed, vspeed, damage, lifetime
+    player_features: int = 19  # See obs_utils.py for layout
 
     # Action space
     n_move_dirs: int = 9  # 8 directions + no-move (index 8)
@@ -44,7 +46,18 @@ class EnvConfig:
     max_ammo: float = 99.0
     max_level: float = 20.0
     max_hitid: float = 120.0
+    max_enemies_on_level: float = 30.0  # Approximate max enemies per level
+
+    # Projectile normalization (Cycle 2)
+    # GML may send raw values or pre-normalized values; we re-clip defensively.
+    max_projectile_speed: float = 16.0  # Approx fastest bullet speed (px/frame)
+    max_projectile_damage: float = 20.0  # Approx max projectile damage
+    max_projectile_lifetime: float = 120.0  # Approx max projectile lifetime (frames)
 
     @property
     def obs_dim(self) -> int:
-        return self.player_features + (self.max_enemies * self.enemy_features)
+        return (
+            self.player_features
+            + (self.max_enemies * self.enemy_features)
+            + (self.max_projectiles * self.projectile_features)
+        )

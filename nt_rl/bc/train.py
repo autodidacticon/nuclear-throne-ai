@@ -23,9 +23,15 @@ from nt_rl.env import NuclearThroneEnv
 def _get_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
+    # MPS (Apple Silicon) has known issues with Categorical.log_prob / gather
+    # operations used by SB3's MultiCategorical distribution inside the
+    # imitation BC trainer.  Fall back to CPU for reliability.
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    warnings.warn("Neither CUDA nor MPS available — training on CPU")
+        warnings.warn(
+            "MPS available but skipped — Categorical.log_prob triggers "
+            "'Placeholder storage has not been allocated on MPS device'. "
+            "Training on CPU instead."
+        )
     return "cpu"
 
 
@@ -85,9 +91,11 @@ def train(bc_config: BCConfig | None = None, env_config: EnvConfig | None = None
     from imitation.data.rollout import flatten_trajectories
     train_transitions = flatten_trajectories(train_trajectories)
 
+    rng = np.random.default_rng(seed=42)
     bc_trainer = BC(
         observation_space=obs_space,
         action_space=act_space,
+        rng=rng,
         demonstrations=train_transitions,
         policy=policy,
         device=device,
@@ -115,11 +123,9 @@ def train(bc_config: BCConfig | None = None, env_config: EnvConfig | None = None
             bc_config.use_wandb = False
 
     # --- Evaluation env ---
+    # Skip eval env — it requires a running game/mock server.
+    # BC training validates via val loss and action accuracy instead.
     eval_env = None
-    try:
-        eval_env = _make_eval_env(bc_config, env_config)
-    except Exception as e:
-        warnings.warn(f"Could not create eval env: {e} — skipping live evaluation")
 
     # --- Training loop ---
     print(f"\n{'=' * 60}")

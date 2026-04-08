@@ -117,6 +117,18 @@ iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
 # Allow outbound to whitelisted IPs (HTTP + HTTPS)
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
 
+# Allow game socket bridge ports to the host (for RL agent ↔ game communication).
+# host.docker.internal is the standard Docker/OrbStack alias for the host machine.
+HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}' || true)
+GATEWAY_IP=$(ip route show default 2>/dev/null | awk '{print $3}' || true)
+for ip in $HOST_IP $GATEWAY_IP; do
+    if [ -n "$ip" ]; then
+        iptables -A OUTPUT -p tcp -d "$ip" --dport 7777:7784 -j ACCEPT
+        iptables -A OUTPUT -p udp -d "$ip" --dport 7777:7784 -j ACCEPT
+        echo "  Game ports 7777-7784 (TCP+UDP) allowed to $ip"
+    fi
+done
+
 # Only restrict the vscode user — root (dockerd, apt) is unrestricted
 iptables -A OUTPUT -m owner --uid-owner "$VSCODE_UID" -j DROP
 

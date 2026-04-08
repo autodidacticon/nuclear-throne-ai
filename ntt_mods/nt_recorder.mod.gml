@@ -142,6 +142,53 @@ var _proll = _p.roll;
 var _prace = _p.race;
 var _pnexthurt = _p.nexthurt;
 
+// --- Wall raycast distances (4 cardinal directions) ---
+// Step in 8px increments out to 300px and find the first wall hit.
+// Mirrors scr_agent_build_state._agent_raycast_wall in the rebuild.
+// Defaults to 1.0 (no wall) if collision_line / Wall isn't available.
+var _wall_max = 300;
+var _wall_step = 8;
+var _wall_e = 1.0;
+var _wall_n = 1.0;
+var _wall_w = 1.0;
+var _wall_s = 1.0;
+
+if (object_exists(Wall)) {
+    var _de = _wall_max;
+    var _dn = _wall_max;
+    var _dw = _wall_max;
+    var _ds = _wall_max;
+    var _found_e = false;
+    var _found_n = false;
+    var _found_w = false;
+    var _found_s = false;
+    var _d = _wall_step;
+    while (_d <= _wall_max) {
+        if (!_found_e && collision_line(_px, _py, _px + _d, _py, Wall, true, true) != noone) {
+            _de = _d;
+            _found_e = true;
+        }
+        if (!_found_n && collision_line(_px, _py, _px, _py - _d, Wall, true, true) != noone) {
+            _dn = _d;
+            _found_n = true;
+        }
+        if (!_found_w && collision_line(_px, _py, _px - _d, _py, Wall, true, true) != noone) {
+            _dw = _d;
+            _found_w = true;
+        }
+        if (!_found_s && collision_line(_px, _py, _px, _py + _d, Wall, true, true) != noone) {
+            _ds = _d;
+            _found_s = true;
+        }
+        if (_found_e && _found_n && _found_w && _found_s) break;
+        _d += _wall_step;
+    }
+    _wall_e = min(_de / _wall_max, 1.0);
+    _wall_n = min(_dn / _wall_max, 1.0);
+    _wall_w = min(_dw / _wall_max, 1.0);
+    _wall_s = min(_ds / _wall_max, 1.0);
+}
+
 // Ammo array - read each element
 var _ammo0 = _p.ammo[0];
 var _ammo1 = _p.ammo[1];
@@ -213,6 +260,89 @@ if (instance_exists(enemy)) {
             + ',"my_health":' + string(_elist_hp[_i])
             + ',"maxhealth":' + string(_elist_maxhp[_i])
             + ',"type_id":' + string(_elist_type[_i]) + '}';
+    }
+}
+
+// --- Enemy projectile collection (nearest 20, sorted by distance) ---
+// EnemyBullet1 is the parent class for all enemy projectiles in NT/NTT
+// (Guardian bullets, IDPD bullets, Throne2Ball, etc all inherit from it).
+// Mirrors the projectile collection in scr_agent_build_state.
+var _proj_str = "";
+var _proj_count = 0;
+
+if (object_exists(EnemyBullet1) && instance_exists(EnemyBullet1)) {
+    var _pn = instance_number(EnemyBullet1);
+    var _plist_x = array_create(_pn);
+    var _plist_y = array_create(_pn);
+    var _plist_hsp = array_create(_pn);
+    var _plist_vsp = array_create(_pn);
+    var _plist_dmg = array_create(_pn);
+    var _plist_life = array_create(_pn);
+    var _plist_dist = array_create(_pn);
+    var _pi = 0;
+
+    with (EnemyBullet1) {
+        var _pdmg = variable_instance_exists(id, "damage") ? damage : 1;
+        var _plife = variable_instance_exists(id, "lifetime") ? lifetime : 0;
+        _plist_x[_pi] = x;
+        _plist_y[_pi] = y;
+        _plist_hsp[_pi] = hspeed;
+        _plist_vsp[_pi] = vspeed;
+        _plist_dmg[_pi] = _pdmg;
+        _plist_life[_pi] = _plife;
+        _plist_dist[_pi] = point_distance(x, y, _px, _py);
+        _pi += 1;
+    }
+
+    var _ptotal = _pi;
+
+    // Insertion sort by distance ascending (NTT lacks array_sort)
+    var _pj, _pkx, _pky, _pkhsp, _pkvsp, _pkdmg, _pklife, _pkd;
+    for (var _i = 1; _i < _ptotal; _i += 1) {
+        _pkd = _plist_dist[_i];
+        _pkx = _plist_x[_i];
+        _pky = _plist_y[_i];
+        _pkhsp = _plist_hsp[_i];
+        _pkvsp = _plist_vsp[_i];
+        _pkdmg = _plist_dmg[_i];
+        _pklife = _plist_life[_i];
+        _pj = _i - 1;
+        while (_pj >= 0 && _plist_dist[_pj] > _pkd) {
+            _plist_dist[_pj + 1] = _plist_dist[_pj];
+            _plist_x[_pj + 1] = _plist_x[_pj];
+            _plist_y[_pj + 1] = _plist_y[_pj];
+            _plist_hsp[_pj + 1] = _plist_hsp[_pj];
+            _plist_vsp[_pj + 1] = _plist_vsp[_pj];
+            _plist_dmg[_pj + 1] = _plist_dmg[_pj];
+            _plist_life[_pj + 1] = _plist_life[_pj];
+            _pj -= 1;
+        }
+        _plist_dist[_pj + 1] = _pkd;
+        _plist_x[_pj + 1] = _pkx;
+        _plist_y[_pj + 1] = _pky;
+        _plist_hsp[_pj + 1] = _pkhsp;
+        _plist_vsp[_pj + 1] = _pkvsp;
+        _plist_dmg[_pj + 1] = _pkdmg;
+        _plist_life[_pj + 1] = _pklife;
+    }
+
+    // Cap at max projectiles and build JSON.
+    // Emit pre-normalized values to match scr_agent_build_state's projectile output.
+    _proj_count = min(_ptotal, global.rec_max_enemies);
+    for (var _i = 0; _i < _proj_count; _i += 1) {
+        if (_i > 0) _proj_str += ",";
+        var _nx = _plist_x[_i] / 10080.0;
+        var _ny = _plist_y[_i] / 10080.0;
+        var _nhsp = max(-1.0, min(1.0, _plist_hsp[_i] / 10.0));
+        var _nvsp = max(-1.0, min(1.0, _plist_vsp[_i] / 10.0));
+        var _ndmg = min(_plist_dmg[_i] / 10.0, 1.0);
+        var _nlife = min(_plist_life[_i] / 60.0, 1.0);
+        _proj_str += '{"x":' + string(_nx)
+            + ',"y":' + string(_ny)
+            + ',"hspeed":' + string(_nhsp)
+            + ',"vspeed":' + string(_nvsp)
+            + ',"damage":' + string(_ndmg)
+            + ',"lifetime":' + string(_nlife) + '}';
     }
 }
 
@@ -292,10 +422,17 @@ _json += ',"player":{'
     + ',"roll":' + rec_bool_str(_proll)
     + ',"race":' + string(_prace)
     + ',"nexthurt":' + string(_pnexthurt)
+    + ',"wall_dist_e":' + string(_wall_e)
+    + ',"wall_dist_n":' + string(_wall_n)
+    + ',"wall_dist_w":' + string(_wall_w)
+    + ',"wall_dist_s":' + string(_wall_s)
     + '}';
 
 // Enemies array
 _json += ',"enemies":[' + _enemy_str + ']';
+
+// Projectiles array (enemy bullets, nearest 20)
+_json += ',"projectiles":[' + _proj_str + ']';
 
 // Game state
 _json += ',"game":{'

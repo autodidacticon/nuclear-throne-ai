@@ -1,4 +1,4 @@
-"""NuclearThroneEnv — Gymnasium-compatible environment wrapping the GML TCP socket bridge."""
+"""NuclearThroneEnv — Gymnasium-compatible environment wrapping the GML UDP bridge."""
 
 import json
 import socket
@@ -17,7 +17,7 @@ _MOVE_DIRS = [0, 45, 90, 135, 180, 225, 270, 315]
 
 
 class NuclearThroneEnv(gymnasium.Env):
-    """Gymnasium environment for Nuclear Throne RL training via TCP socket bridge."""
+    """Gymnasium environment for Nuclear Throne RL training via UDP bridge."""
 
     metadata = {"render_modes": []}
 
@@ -38,27 +38,44 @@ class NuclearThroneEnv(gymnasium.Env):
         )
 
         self._socket: socket.socket | None = None
-        self._recv_buffer = ""
         self._step_count = 0
+        self._game_addr = (self.config.host, self.port)
+        self._prev_cumulative_reward = 0.0  # For computing reward deltas
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._step_count = 0
-        self._recv_buffer = ""
+        self._prev_cumulative_reward = 0.0
 
         try:
             if self._socket is None:
-                self._connect()
+                self._create_socket()
 
+            # Drain any stale datagrams
+            self._drain()
+
+            # Send reset. The game may need time to process (room_restart).
+            # Keep sending pings until we get a state back, since the game
+            # needs a received datagram to know our address.
             self._send_json({"type": "reset"})
-            state = self._recv_json()
-            obs = encode_observation(state, self.config)
-            info = {"game": state.get("game", {}), "frame": state.get("frame", 0)}
-            return obs, info
+
+            deadline = time.time() + self.config.socket_timeout
+            noop = json.dumps({"type": "action", "move_dir": 0, "moving": False,
+                               "aim_dir": 0, "fire": False, "spec": False})
+            while time.time() < deadline:
+                try:
+                    state = self._recv_state(timeout=1.0)
+                    obs = encode_observation(state, self.config)
+                    info = {"game": state.get("game", {}), "frame": state.get("frame", 0)}
+                    return obs, info
+                except (TimeoutError, OSError):
+                    # Re-send a ping so the game knows our address after room_restart
+                    self._socket.sendto(noop.encode(), self._game_addr)
+
+            raise TimeoutError("No state received after reset")
 
         except Exception as e:
             print(f"NuclearThroneEnv: reset error: {e}", file=sys.stderr)
-            self._close_socket()
             return np.zeros(self.config.obs_dim, dtype=np.float32), {}
 
     def step(self, action):
@@ -67,10 +84,13 @@ class NuclearThroneEnv(gymnasium.Env):
         try:
             action_dict = self._decode_action(action)
             self._send_json(action_dict)
-            state = self._recv_json()
+            state = self._recv_state()
 
             obs = encode_observation(state, self.config)
-            reward = float(state.get("reward", 0.0))
+            # Reward is cumulative on the GML side — compute delta
+            cumulative = float(state.get("reward", 0.0))
+            reward = cumulative - self._prev_cumulative_reward
+            self._prev_cumulative_reward = cumulative
             terminated = bool(state.get("done", False))
             truncated = self._step_count >= self.config.max_steps
             info = {
@@ -81,10 +101,9 @@ class NuclearThroneEnv(gymnasium.Env):
 
             return obs, reward, terminated, truncated, info
 
-        except (ConnectionError, TimeoutError, OSError) as e:
-            print(f"NuclearThroneEnv: connection error at step {self._step_count}: {e}",
+        except (TimeoutError, OSError) as e:
+            print(f"NuclearThroneEnv: error at step {self._step_count}: {e}",
                   file=sys.stderr)
-            self._close_socket()
             return (
                 np.zeros(self.config.obs_dim, dtype=np.float32),
                 0.0, True, False,
@@ -100,7 +119,12 @@ class NuclearThroneEnv(gymnasium.Env):
             )
 
     def close(self):
-        self._close_socket()
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
+            self._socket = None
 
     def _decode_action(self, action) -> dict:
         """Convert MultiDiscrete action to GML JSON action format."""
@@ -124,63 +148,57 @@ class NuclearThroneEnv(gymnasium.Env):
             "pick": False,
         }
 
-    def _connect(self, max_retries: int = 10, retry_delay: float = 3.0):
-        """Connect to the GML socket bridge with retry logic."""
-        for attempt in range(1, max_retries + 1):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(self.config.socket_timeout)
-                sock.connect((self.config.host, self.port))
-                self._socket = sock
-                self._recv_buffer = ""
-                print(f"NuclearThroneEnv: connected to {self.config.host}:{self.port}",
-                      file=sys.stderr)
-                return
-            except (ConnectionRefusedError, TimeoutError, OSError) as e:
-                print(f"NuclearThroneEnv: connect attempt {attempt}/{max_retries} "
-                      f"failed: {e}", file=sys.stderr)
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
-
-        raise RuntimeError(
-            f"Failed to connect to {self.config.host}:{self.port} "
-            f"after {max_retries} attempts"
-        )
+    def _create_socket(self):
+        """Create a UDP socket. No connection needed."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+        sock.settimeout(self.config.step_timeout)
+        self._socket = sock
+        print(f"NuclearThroneEnv: UDP socket ready, target {self._game_addr}",
+              file=sys.stderr)
 
     def _send_json(self, data: dict):
-        """Send a newline-delimited JSON message."""
+        """Send a JSON message as a UDP datagram."""
         if self._socket is None:
-            raise ConnectionError("Socket not connected")
-        msg = json.dumps(data) + "\n"
-        self._socket.sendall(msg.encode("utf-8"))
+            raise ConnectionError("Socket not created")
+        msg = json.dumps(data).encode("utf-8")
+        self._socket.sendto(msg, self._game_addr)
 
-    def _recv_json(self) -> dict:
-        """Read one newline-delimited JSON message from the socket."""
+    def _recv_state(self, timeout: float | None = None) -> dict:
+        """Receive the latest state datagram, draining any older ones.
+
+        UDP datagrams are complete messages — no fragmentation. We drain
+        all queued datagrams and return the most recent one.
+        """
         if self._socket is None:
-            raise ConnectionError("Socket not connected")
+            raise ConnectionError("Socket not created")
 
-        self._socket.settimeout(self.config.step_timeout)
+        self._socket.settimeout(timeout or self.config.step_timeout)
 
-        while "\n" not in self._recv_buffer:
-            try:
-                chunk = self._socket.recv(65536)
-            except socket.timeout:
-                raise TimeoutError("No state received within step_timeout")
+        # Block until at least one datagram arrives
+        data, _addr = self._socket.recvfrom(65536)
+        latest = data
 
-            if not chunk:
-                raise ConnectionError("Socket closed by remote")
+        # Drain any additional queued datagrams (non-blocking) to get the latest
+        self._socket.setblocking(False)
+        try:
+            while True:
+                data, _addr = self._socket.recvfrom(65536)
+                latest = data
+        except (BlockingIOError, OSError):
+            pass
+        self._socket.setblocking(True)
 
-            self._recv_buffer += chunk.decode("utf-8")
+        return json.loads(latest.decode("utf-8").strip())
 
-        line, self._recv_buffer = self._recv_buffer.split("\n", 1)
-        return json.loads(line)
-
-    def _close_socket(self):
-        """Close socket and reset state."""
-        if self._socket is not None:
-            try:
-                self._socket.close()
-            except OSError:
-                pass
-            self._socket = None
-        self._recv_buffer = ""
+    def _drain(self):
+        """Drain all queued UDP datagrams."""
+        if self._socket is None:
+            return
+        self._socket.setblocking(False)
+        try:
+            while True:
+                self._socket.recvfrom(65536)
+        except (BlockingIOError, OSError):
+            pass
+        self._socket.setblocking(True)
