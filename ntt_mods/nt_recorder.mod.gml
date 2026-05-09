@@ -41,6 +41,24 @@ if (!instance_exists(Player)) {
     return;
 }
 
+// --- Skip mutation/pause/intermission frames ---
+// The recorder only captures keyboard state, but mutation screens are mouse
+// driven, so frames where the game is paused at LevCont/GenCont/GameOver/etc
+// would pollute BC training data with stationary "no-input" frames. Bail out
+// before recording when any pause-equivalent UI is active.
+global.rec_is_paused_tmp = false;
+if (object_exists(LevCont) && instance_exists(LevCont)) global.rec_is_paused_tmp = true;
+if (object_exists(GenCont) && instance_exists(GenCont)) global.rec_is_paused_tmp = true;
+if (object_exists(GameOver) && instance_exists(GameOver)) global.rec_is_paused_tmp = true;
+if (object_exists(UberCont) && instance_exists(UberCont)) {
+    with (UberCont) {
+        if (variable_instance_exists(id, "paused") && paused) global.rec_is_paused_tmp = true;
+        if (variable_instance_exists(id, "want_pause") && want_pause > 0) global.rec_is_paused_tmp = true;
+        if (variable_instance_exists(id, "bossintro") && bossintro) global.rec_is_paused_tmp = true;
+    }
+}
+if (global.rec_is_paused_tmp) return;
+
 var _p = instance_nearest(0, 0, Player);
 
 // --- Detect episode boundaries ---
@@ -368,6 +386,26 @@ if (instance_exists(GameCont)) {
     _hard    = GameCont.hard;
 }
 
+// --- Enemies remaining count ---
+var _enemies_remaining = 0;
+with (enemy) { _enemies_remaining += 1; }
+
+// --- Portal direction and distance ---
+var _portal_dir = 0.5;   // default: no portal visible
+var _portal_dist = 1.0;  // default: far / no portal
+if (instance_exists(Player)) {
+    var _portal = noone;
+    if (object_exists(Portal) && instance_exists(Portal))
+        _portal = instance_nearest(_px, _py, Portal);
+    else if (object_exists(BigPortal) && instance_exists(BigPortal))
+        _portal = instance_nearest(_px, _py, BigPortal);
+
+    if (_portal != noone) {
+        _portal_dir = point_direction(_px, _py, _portal.x, _portal.y) / 360.0;
+        _portal_dist = min(point_distance(_px, _py, _portal.x, _portal.y) / 300.0, 1.0);
+    }
+}
+
 // --- Human input via NTT button API ---
 var _btn_east  = button_check(0, "east");
 var _btn_west  = button_check(0, "west");
@@ -447,6 +485,9 @@ _json += ',"game":{'
     + ',"loops":' + string(_loops)
     + ',"kills":' + string(_kills)
     + ',"hard":' + string(_hard)
+    + ',"enemies_remaining":' + string(_enemies_remaining)
+    + ',"portal_dir":' + string(_portal_dir)
+    + ',"portal_dist":' + string(_portal_dist)
     + '}';
 
 // Human action

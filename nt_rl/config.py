@@ -16,7 +16,7 @@ class EnvConfig:
     enemy_features: int = 5  # x, y, hp_ratio, max_hp, hitid_norm
     max_projectiles: int = 20  # Matches GML global.agent_max_projectiles
     projectile_features: int = 6  # x, y, hspeed, vspeed, damage, lifetime
-    player_features: int = 19  # See obs_utils.py for layout
+    player_features: int = 20  # See obs_utils.py for layout
 
     # Action space
     n_move_dirs: int = 9  # 8 directions + no-move (index 8)

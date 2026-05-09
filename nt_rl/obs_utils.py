@@ -1,8 +1,8 @@
 """Observation encoding utilities for Nuclear Throne RL environment.
 
-Observation vector layout (with default config, 239 floats total):
+Observation vector layout (with default config, 240 floats total):
 
-Player features (indices 0-18):
+Player features (indices 0-19):
   [0]  player_x_norm         — x / room_width, clipped [0, 1]
   [1]  player_y_norm         — y / room_height, clipped [0, 1]
   [2]  player_hp_ratio       — hp / max_hp, clipped [0, 1]
@@ -22,8 +22,14 @@ Player features (indices 0-18):
   [16] enemies_remaining_norm — game.enemies_remaining / max_enemies_on_level, clipped [0, 1]
   [17] portal_dir_norm       — game.portal_dir, already [0, 1]
   [18] portal_dist_norm      — game.portal_dist, already [0, 1]
+  [19] mutation_screen       — 1.0 when the game is paused at a mutation /
+                                level-up / game-over screen, else 0.0. The
+                                rebuild's bridge sets this from
+                                instance_exists(LevCont). BC training data
+                                always has 0.0 here because mutation frames
+                                are filtered out by the NTT recorder.
 
-Enemy features (indices 19 to 118, zero-padded to 20 enemies):
+Enemy features (indices 20 to 119, zero-padded to 20 enemies):
   Per enemy (5 floats):
     [0] enemy_x_norm         — x / room_width
     [1] enemy_y_norm         — y / room_height
@@ -31,7 +37,7 @@ Enemy features (indices 19 to 118, zero-padded to 20 enemies):
     [3] enemy_max_hp_norm    — max_hp / 100, clipped [0, 1]
     [4] enemy_hitid_norm     — hitid / max_hitid
 
-Projectile features (indices 119 to 238, zero-padded to 20 projectiles):
+Projectile features (indices 120 to 239, zero-padded to 20 projectiles):
   Per projectile (6 floats):
     [0] proj_x_norm          — x / room_width, clipped [0, 1]
     [1] proj_y_norm          — y / room_height, clipped [0, 1]
@@ -90,10 +96,16 @@ def encode_observation(state: dict, config: EnvConfig) -> np.ndarray:
 
     # Strategic features (from game struct; defaults handle BC/NTT data that
     # doesn't include these fields)
-    obs[16] = float(np.clip(
-        game.get("enemies_remaining", 15) / config.max_enemies_on_level, 0.0, 1.0))
+    enemies_remaining = game.get("enemies_remaining", len(enemies))
+    obs[16] = _clip_norm(enemies_remaining, config.max_enemies_on_level)
     obs[17] = float(np.clip(game.get("portal_dir", 0.5), 0.0, 1.0))
     obs[18] = float(np.clip(game.get("portal_dist", 1.0), 0.0, 1.0))
+
+    # Mutation/pause screen flag — set by the rebuild's bridge from
+    # instance_exists(LevCont). NTT recordings filter these frames out, so
+    # BC training data always has 0.0 here. At inference time the agent learns
+    # "when this flag is true, my behavior doesn't matter (game is paused)".
+    obs[19] = 1.0 if state.get("mutation_screen", False) else 0.0
 
     # Enemy features (sorted by distance in GML, already nearest-first)
     offset = config.player_features

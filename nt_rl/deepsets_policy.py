@@ -1,8 +1,8 @@
 """DeepSets-style entity features extractor for Nuclear Throne RL.
 
-The flat 239-dim observation contains three semantically distinct groups:
+The flat 240-dim observation contains three semantically distinct groups:
 
-  1. Player scalars (19 features) — global state, fed through unchanged.
+  1. Player scalars (20 features) — global state, fed through unchanged.
   2. Enemy set (20 enemies x 5 features) — variable-cardinality, padded with
      zeros. Order is "nearest first" but we still want a permutation-invariant
      pooled representation so the policy generalizes across enemy populations.
@@ -14,8 +14,8 @@ both to "average threat" and "worst-case" entities. Padding slots (all-zero
 features) are masked out so they don't dilute the pooled representation.
 
 Output dimensions:
-    player(19) + enemy_mean(32) + enemy_max(32) + proj_mean(32) + proj_max(32)
-    = 147 features
+    player(20) + enemy_mean(32) + enemy_max(32) + proj_mean(32) + proj_max(32)
+    = 148 features
 """
 
 import torch
@@ -24,7 +24,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
 # Layout constants — must mirror nt_rl.config.EnvConfig defaults.
-PLAYER_DIM = 19
+PLAYER_DIM = 20
 N_ENEMIES = 20
 ENEMY_DIM = 5
 N_PROJECTILES = 20
@@ -32,7 +32,7 @@ PROJECTILE_DIM = 6
 
 ENEMY_OFFSET = PLAYER_DIM
 PROJECTILE_OFFSET = PLAYER_DIM + N_ENEMIES * ENEMY_DIM
-TOTAL_OBS_DIM = PROJECTILE_OFFSET + N_PROJECTILES * PROJECTILE_DIM  # 239
+TOTAL_OBS_DIM = PROJECTILE_OFFSET + N_PROJECTILES * PROJECTILE_DIM  # 240
 
 # Per-entity hidden dim. Mean + max pool doubles this for the output.
 ENTITY_HIDDEN = 32
@@ -40,7 +40,7 @@ DEEPSETS_FEATURES_DIM = (
     PLAYER_DIM
     + 2 * ENTITY_HIDDEN  # enemy mean + max
     + 2 * ENTITY_HIDDEN  # projectile mean + max
-)  # 19 + 64 + 64 = 147
+)  # 20 + 64 + 64 = 148
 
 
 class DeepSetsExtractor(BaseFeaturesExtractor):
@@ -74,7 +74,7 @@ class DeepSetsExtractor(BaseFeaturesExtractor):
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        # obs shape: [batch, 239]
+        # obs shape: [batch, 240]
         player = obs[:, :ENEMY_OFFSET]
         enemies = obs[:, ENEMY_OFFSET:PROJECTILE_OFFSET].view(
             -1, N_ENEMIES, ENEMY_DIM

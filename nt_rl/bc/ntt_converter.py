@@ -371,11 +371,15 @@ class NTTLogConverter:
             # NTT recordings) are passed through unchanged — encode_observation
             # already knows how to read them, and old logs without them fall
             # back to safe defaults (0.5 for walls, 0.0 for projectiles).
+            # `mutation_screen` is forwarded if present; older recordings
+            # (and the post-Option-3 recorder, which filters paused frames out)
+            # default to False, which matches the encoder's fallback.
             frame = {
                 "player": dict(raw_frame.get("player", {})),
                 "enemies": [dict(e) for e in raw_frame.get("enemies", [])],
                 "projectiles": [dict(p) for p in raw_frame.get("projectiles", [])],
                 "game": dict(raw_frame.get("game", {})),
+                "mutation_screen": raw_frame.get("mutation_screen", False),
             }
 
             # Map NTT variable names to rebuild names

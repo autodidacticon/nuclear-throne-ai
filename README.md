@@ -154,14 +154,33 @@ checkpoints/               Model checkpoints
 
 ### Agent Phase Prompts
 
-| Phase | Prompt |
-|-------|--------|
-| 1. Repo Analysis | [prompts/agent_01_repo_analysis.md](prompts/agent_01_repo_analysis.md) |
-| 2. GML Bridge | [prompts/agent_02_gml_bridge.md](prompts/agent_02_gml_bridge.md) |
-| 3. Infrastructure | [prompts/agent_03_infrastructure.md](prompts/agent_03_infrastructure.md) |
-| 4. Gymnasium Env | [prompts/agent_04_gymnasium_env.md](prompts/agent_04_gymnasium_env.md) |
-| 5. Behavioral Cloning | [prompts/agent_05_behavioural_cloning.md](prompts/agent_05_behavioural_cloning.md) |
-| 6. PPO Training | [prompts/agent_06_ppo_training.md](prompts/agent_06_ppo_training.md) |
+| Phase | Prompt | Status |
+|-------|--------|--------|
+| 1. Repo Analysis | [prompts/agent_01_repo_analysis.md](prompts/agent_01_repo_analysis.md) | Done |
+| 2. GML Bridge | [prompts/agent_02_gml_bridge.md](prompts/agent_02_gml_bridge.md) | Done |
+| 3. Infrastructure | [prompts/agent_03_infrastructure.md](prompts/agent_03_infrastructure.md) | Done |
+| 4. Gymnasium Env | [prompts/agent_04_gymnasium_env.md](prompts/agent_04_gymnasium_env.md) | Done |
+| 5. Behavioral Cloning | [prompts/agent_05_behavioural_cloning.md](prompts/agent_05_behavioural_cloning.md) | Done |
+| 6. PPO Training | [prompts/agent_06_ppo_training.md](prompts/agent_06_ppo_training.md) | Done |
+| 7. Weapon Observability | [prompts/agent_07_weapon_observability.md](prompts/agent_07_weapon_observability.md) | **TODO** |
+| 8. Mutation Selection | [prompts/agent_08_mutation_selection.md](prompts/agent_08_mutation_selection.md) | **TODO** |
+
+## TODO / Future Work
+
+The current pipeline has known gaps that limit how good the trained agent can become. These prompts describe targeted improvements ranked roughly by impact:
+
+### High priority
+
+- **[Weapon observability](prompts/agent_07_weapon_observability.md)** — The agent currently knows its current weapon ID but nothing about its backup weapon, per-ammo-type counts, weapon types, or weapons available to pick up. Without this, strategic weapon swaps and pickups are essentially blind. Recommended starting point: encode weapon TYPE (one-hot category) instead of opaque weapon IDs, so the policy can generalize across "all snipers behave similarly."
+
+- **[Mutation selection](prompts/agent_08_mutation_selection.md)** — Mutations are the highest-leverage strategic decisions in Nuclear Throne, but the agent picks them **uniformly at random**. The bridge auto-selects a random `SkillIcon` whenever `LevCont` appears. The fastest improvement is a hand-crafted tier list; the long-term solution is a hierarchical sub-policy that picks based on current build state. Owned mutations are also missing from the in-combat observation.
+
+### Open questions
+
+- **Re-record BC data on the rebuild instead of NTT** — current BC data comes from the official NT via the NTT mod, then runs against the rebuild. Variable names and game state might differ subtly. Recording on the rebuild itself (via `agent_record.txt`) would eliminate this drift.
+- **Curriculum learning** — start the agent in later levels to give the in-combat policy more practice on harder content. Currently every episode starts at Desert level 1.
+- **GPU acceleration** — the M4 Max has a capable Metal backend, but the current MLP is too small to benefit. If/when the network grows (Transformer entity encoder, LSTM memory), MPS becomes worthwhile.
+- **Replay buffer + offline RL** — current PPO is purely on-policy. Saving rollouts to disk and using offline algorithms (CQL, IQL) might leverage the data more efficiently.
 
 ## Observation Space
 

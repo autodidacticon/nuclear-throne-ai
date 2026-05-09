@@ -9,6 +9,7 @@ Usage:
 """
 import argparse
 import os
+import signal
 import sys
 import time
 
@@ -210,9 +211,27 @@ def main():
         name_prefix="ppo",
     )
 
+    # Track interrupt count — second Ctrl-C escalates to hard kill
+    interrupt_count = {"n": 0}
+
+    def _sigint_handler(signum, frame):
+        interrupt_count["n"] += 1
+        if interrupt_count["n"] == 1:
+            print("\n[Ctrl-C] Stopping training, will save checkpoint...", flush=True)
+            raise KeyboardInterrupt
+        else:
+            print("\n[Ctrl-C x2] Force-killing all processes.", flush=True)
+            # Hard kill any subprocess workers and game instances
+            os.system("pkill -9 -f Mac_Runner 2>/dev/null")
+            os._exit(130)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     # Train
     print(f"\nStarting PPO training for {args.timesteps:,} timesteps...")
+    print("(Press Ctrl-C once to save and exit cleanly, twice to force-kill)")
     t0 = time.time()
+    interrupted = False
     try:
         model.learn(
             total_timesteps=args.timesteps,
@@ -220,21 +239,41 @@ def main():
             progress_bar=True,
         )
     except KeyboardInterrupt:
-        print("\nTraining interrupted by user.")
+        interrupted = True
+        print("\nTraining interrupted by user — saving final checkpoint before shutdown...")
     except Exception as e:
         print(f"\nTraining error: {e}")
         import traceback
         traceback.print_exc()
 
     elapsed = time.time() - t0
-    print(f"\nTraining completed in {elapsed/60:.1f} minutes")
+    print(f"\nTraining ran for {elapsed/60:.1f} minutes")
 
-    # Save final model
-    final_path = os.path.join(args.checkpoint_dir, "final_model")
-    model.save(final_path)
-    print(f"Final model saved to {final_path}.zip")
+    # Save final model BEFORE closing vec_env (close can hang on SubprocVecEnv)
+    try:
+        final_path = os.path.join(args.checkpoint_dir, "final_model")
+        model.save(final_path)
+        print(f"Final model saved to {final_path}.zip")
+    except Exception as e:
+        print(f"Warning: failed to save final model: {e}")
 
-    vec_env.close()
+    # Close vec_env with a timeout — SubprocVecEnv workers can block on UDP recv
+    print("Closing vectorized environment...")
+    close_timer = signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
+    try:
+        signal.alarm(10)  # 10s grace period
+        vec_env.close()
+        signal.alarm(0)
+        print("VecEnv closed cleanly.")
+    except (TimeoutError, Exception) as e:
+        signal.alarm(0)
+        print(f"VecEnv close timed out or failed ({e}) — force-killing subprocess workers.")
+        # Kill any lingering subprocess workers
+        os.system("pkill -f 'multiprocessing.spawn' 2>/dev/null")
+
+    if interrupted:
+        print("\nDone. Game instances are still running — kill them with: pkill -f Mac_Runner")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
