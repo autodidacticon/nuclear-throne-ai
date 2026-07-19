@@ -441,32 +441,32 @@ class NTTLogConverter:
                          np.zeros(2, dtype=int)]
 
         for f in npz_files:
-            data = np.load(f)
-            obs = data["obs"]
-            actions = data["actions"]
-            rewards = data["rewards"]
-            dones = data["dones"]
+            with np.load(f) as data:
+                obs = data["obs"]
+                actions = data["actions"]
+                rewards = data["rewards"]
+                dones = data["dones"]
 
-            n = len(obs)
-            assert len(actions) == n and len(rewards) == n and len(dones) == n, \
-                f"Array length mismatch in {f}"
+                n = len(obs)
+                assert len(actions) == n and len(rewards) == n and len(dones) == n, \
+                    f"Array length mismatch in {f}"
 
-            # Observation dimension check
-            assert obs.shape[1] == config.obs_dim, \
-                f"Obs dim {obs.shape[1]} != expected {config.obs_dim} in {f}"
+                # Observation dimension check
+                assert obs.shape[1] == config.obs_dim, \
+                    f"Obs dim {obs.shape[1]} != expected {config.obs_dim} in {f}"
 
-            # Action range checks
-            action_limits = [config.n_move_dirs, config.n_aim_angles, 2, 2]
-            for dim, limit in enumerate(action_limits):
-                assert np.all(actions[:, dim] >= 0) and np.all(actions[:, dim] < limit), \
-                    f"Action dim {dim} out of range [0, {limit}) in {f}"
+                # Action range checks
+                action_limits = [config.n_move_dirs, config.n_aim_angles, 2, 2]
+                for dim, limit in enumerate(action_limits):
+                    assert np.all(actions[:, dim] >= 0) and np.all(actions[:, dim] < limit), \
+                        f"Action dim {dim} out of range [0, {limit}) in {f}"
 
-            total_transitions += n
-            lengths.append(n)
+                total_transitions += n
+                lengths.append(n)
 
-            for dim in range(4):
-                action_counts[dim] += np.bincount(actions[:, dim],
-                                                  minlength=action_counts[dim].shape[0])
+                for dim in range(4):
+                    action_counts[dim] += np.bincount(actions[:, dim],
+                                                      minlength=action_counts[dim].shape[0])
 
         print(f"Validation passed for {total_episodes} episode(s):")
         print(f"  Total transitions: {total_transitions:,}")

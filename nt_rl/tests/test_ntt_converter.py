@@ -545,8 +545,8 @@ class TestDiscretizeActionFromVelocity:
             out = os.path.join(d, "out")
             converter = NTTLogConverter(config=config)
             created = converter.convert_file(path, out)
-            data = np.load(created[0])
-            assert data["actions"][0, 0] == 2  # N from velocity, not 0 (E) from move_dir
+            with np.load(created[0]) as data:
+                assert data["actions"][0, 0] == 2  # N from velocity, not 0 (E) from move_dir
 
 
 # ---------------------------------------------------------------------------
