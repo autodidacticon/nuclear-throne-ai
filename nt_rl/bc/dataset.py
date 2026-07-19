@@ -44,22 +44,22 @@ class DemonstrationDataset:
         offset = 0
 
         for f in npz_files:
-            data = np.load(f)
-            obs = data["obs"]
-            actions = data["actions"]
-            rewards = data["rewards"]
-            dones = data["dones"]
+            with np.load(f) as data:
+                obs = data["obs"]
+                actions = data["actions"]
+                rewards = data["rewards"]
+                dones = data["dones"]
 
-            n = len(obs)
-            assert len(actions) == n and len(rewards) == n and len(dones) == n, \
-                f"Array length mismatch in {f}"
+                n = len(obs)
+                assert len(actions) == n and len(rewards) == n and len(dones) == n, \
+                    f"Array length mismatch in {f}"
 
-            all_obs.append(obs)
-            all_actions.append(actions)
-            all_rewards.append(rewards)
-            all_dones.append(dones)
-            self._episode_boundaries.append((offset, offset + n))
-            offset += n
+                all_obs.append(obs)
+                all_actions.append(actions)
+                all_rewards.append(rewards)
+                all_dones.append(dones)
+                self._episode_boundaries.append((offset, offset + n))
+                offset += n
 
         self.obs = np.concatenate(all_obs).astype(np.float32)
         self.actions = np.concatenate(all_actions).astype(np.int32)
